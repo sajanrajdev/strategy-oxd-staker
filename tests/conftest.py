@@ -1,9 +1,10 @@
 import time
 
 from brownie import (
-    MyStrategy,
+    StrategyOxdStakingOptimizer,
     TheVault,
     interface,
+    MockStrategy,
     accounts,
 )
 from _setup.config import (
@@ -48,8 +49,13 @@ def want(deployer):
     token.transfer(deployer, token.balanceOf(WHALE)/4, {"from": WHALE})
     return token
 
+@pytest.fixture
+def oxSolid():
+    return interface.IERC20Detailed("0xDA0053F0bEfCbcaC208A3f867BB243716734D809")
 
-
+@pytest.fixture
+def oxd():
+    return interface.IERC20Detailed("0xc5A9848b9d145965d821AaeC8fA32aaEE026492d")
 
 @pytest.fixture
 def strategist():
@@ -88,10 +94,76 @@ def randomUser():
 def badgerTree():
     return accounts[8]
 
+# Deploy mock vault
+@pytest.fixture
+def bveOXD(oxd, deployer, strategist, keeper, guardian, governance, badgerTree):
+    vault = TheVault.deploy({"from": deployer})
+    vault.initialize(
+        oxd,
+        governance,
+        keeper,
+        guardian,
+        governance,
+        strategist,
+        badgerTree,
+        "",
+        "",
+        [
+            PERFORMANCE_FEE_GOVERNANCE,
+            PERFORMANCE_FEE_STRATEGIST,
+            WITHDRAWAL_FEE,
+            MANAGEMENT_FEE,
+        ],
+    )
+    strategy = MockStrategy.deploy({"from": deployer})
+    strategy.initialize(vault)
+
+    vault.setStrategy(strategy, {"from": governance})
+    return vault
+
+# Deploy mock vault
+@pytest.fixture
+def bOxSolid(oxSolid, deployer, strategist, keeper, guardian, governance, badgerTree):
+    vault = TheVault.deploy({"from": deployer})
+    vault.initialize(
+        oxSolid,
+        governance,
+        keeper,
+        guardian,
+        governance,
+        strategist,
+        badgerTree,
+        "",
+        "",
+        [
+            PERFORMANCE_FEE_GOVERNANCE,
+            PERFORMANCE_FEE_STRATEGIST,
+            WITHDRAWAL_FEE,
+            MANAGEMENT_FEE,
+        ],
+    )
+    strategy = MockStrategy.deploy({"from": deployer})
+    strategy.initialize(vault)
+
+    vault.setStrategy(strategy, {"from": governance})
+    return vault
+
 
 
 @pytest.fixture
-def deployed(want, deployer, strategist, keeper, guardian, governance, proxyAdmin, randomUser, badgerTree):
+def deployed(
+    want, 
+    deployer,
+    strategist,
+    keeper,
+    guardian,
+    governance, 
+    proxyAdmin,
+    randomUser,
+    badgerTree,
+    bveOXD,
+    bOxSolid
+):
     """
     Deploys, vault and test strategy, mock token and wires them up.
     """
@@ -119,8 +191,8 @@ def deployed(want, deployer, strategist, keeper, guardian, governance, proxyAdmi
     vault.setStrategist(deployer, {"from": governance})
     # NOTE: TheVault starts unpaused
 
-    strategy = MyStrategy.deploy({"from": deployer})
-    strategy.initialize(vault, [want])
+    strategy = StrategyOxdStakingOptimizer.deploy({"from": deployer})
+    strategy.initialize(vault, [want, bveOXD, bOxSolid])
     # NOTE: Strategy starts unpaused
 
     vault.setStrategy(strategy, {"from": governance})
