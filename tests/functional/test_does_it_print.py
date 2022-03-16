@@ -4,7 +4,7 @@ from helpers.constants import MaxUint256
 from helpers.SnapshotManager import SnapshotManager
 
 MAX_BPS = 10_000
-MIN_ACCEPTABLE_APR = 0.
+MIN_ACCEPTABLE_APR = 0.0 # No autocompounding
 
 
 def test_is_profitable(vault, strategy, want, randomUser, deployer):
@@ -82,7 +82,7 @@ def test_is_acceptable_apr(vault, strategy, want, keeper, deployer):
     strategy.harvest({"from": keeper})
 
     # Harvest should be non-zero if strat is printing
-    assert vault.lastHarvestAmount() > 0
+    assert vault.lastHarvestAmount() == 0
     # Ensure strategy reports correct harvestedAmount
     assert vault.assetsAtLastHarvest() == vault_balance1
 
@@ -90,4 +90,4 @@ def test_is_acceptable_apr(vault, strategy, want, keeper, deployer):
     apr = 52 * vault.lastHarvestAmount() / vault.assetsAtLastHarvest()
 
     print(f"APR: {apr}")
-    assert apr > MIN_ACCEPTABLE_APR
+    assert apr == MIN_ACCEPTABLE_APR
