@@ -5,17 +5,14 @@ pragma experimental ABIEncoderV2;
 
 import {IERC20Upgradeable} from "@openzeppelin-contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 import {BaseStrategy} from "@badger-finance/BaseStrategy.sol";
-import {IBaseV1Pair} from "../interfaces/solidly/IBaseV1Pair.sol";
+import {route, IBaseV1Router01} from "../interfaces/solidly/IBaseV1Router01.sol";
+import {IVault} from "../interfaces/badger/IVault.sol";
 
 import "../interfaces/oxd/IUserProxy.sol";
 import "../interfaces/oxd/IOxLens.sol";
 import "../interfaces/oxd/IMultiRewards.sol";
 
-
-contract StrategyOxdStaker is BaseStrategy {
-    // address public want; // Inherited from BaseStrategy
-    // address public lpComponent; // Token that represents ownership in a pool, not always used
-    // address public reward; // Token we farm
+contract StrategyOxdStakingOptimizer is BaseStrategy {
 
     // OxDAO
     address public constant userProxyInterface =
@@ -26,12 +23,15 @@ contract StrategyOxdStaker is BaseStrategy {
     address public stakingAddress;
 
     // Solidly
-    address public constant router =
-        0xa38cd27185a464914D3046f0AB9d43356B34829D;
+    IBaseV1Router01 public constant router =
+        IBaseV1Router01(0xa38cd27185a464914D3046f0AB9d43356B34829D);
 
     // Badger
     address public constant badgerTree =
         0x89122c767A5F543e663DB536b603123225bc3823;
+
+    IVault public bveOXD;
+    IVault public bOxSolid;
 
     // ===== Token Registry =====
 
@@ -39,46 +39,45 @@ contract StrategyOxdStaker is BaseStrategy {
         IERC20Upgradeable(0x888EF71766ca594DED1F0FA3AE64eD2941740A20);
     IERC20Upgradeable public constant oxd =
         IERC20Upgradeable(0xc5A9848b9d145965d821AaeC8fA32aaEE026492d);
-    IERC20Upgradeable public constant wftm =
-        IERC20Upgradeable(0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83);
-
-    IERC20Upgradeable public token0;
-    IERC20Upgradeable public token1;
+    IERC20Upgradeable public constant oxSolid =
+        IERC20Upgradeable(0xDA0053F0bEfCbcaC208A3f867BB243716734D809);
 
     /// @dev Initialize the Strategy with security settings as well as tokens
     /// @notice Proxies will set any non constant variable you declare as default value
     /// @dev add any extra changeable variable at end of initializer as shown
-    function initialize(address _vault, address[1] memory _wantConfig) public initializer {
+    function initialize(address _vault, address[3] memory _wantConfig) public initializer {
         __BaseStrategy_init(_vault);
         /// @dev Add config here
         want = _wantConfig[0];
+        bveOXD = IVault(_wantConfig[1]);
+        bOxSolid = IVault(_wantConfig[2]);
 
         // Get staking OxDAO Staking Contract for pool
         stakingAddress = IOxLens(oxLens).stakingRewardsBySolidPool(want);
 
-        // Want is LP with 2 tokens
-        IBaseV1Pair lpToken = IBaseV1Pair(want);
-        token0 = IERC20Upgradeable(lpToken.token0());
-        token1 = IERC20Upgradeable(lpToken.token1());
-
         // Token approvals
         IERC20Upgradeable(want).safeApprove(userProxyInterface, type(uint256).max);
+        solid.safeApprove(address(router), type(uint256).max);
+        oxd.safeApprove(address(bveOXD), type(uint256).max);
+        oxSolid.safeApprove(address(bOxSolid), type(uint256).max);
     }
 
     /// @dev Return the name of the strategy
     function getName() external pure override returns (string memory) {
-        return "StrategyOxdStaker";
+        return "StrategyOxdStakingOptimizer";
     }
 
     /// @dev Return a list of protected tokens
     /// @notice It's very important all tokens that are meant to be in the strategy to be marked as protected
     /// @notice this provides security guarantees to the depositors they can't be sweeped away
     function getProtectedTokens() public view virtual override returns (address[] memory) {
-        address[] memory protectedTokens = new address[](4);
+        address[] memory protectedTokens = new address[](6);
         protectedTokens[0] = want;
         protectedTokens[1] = address(solid);
-        protectedTokens[1] = address(oxd);
-        protectedTokens[1] = address(wftm);
+        protectedTokens[2] = address(oxd);
+        protectedTokens[3] = address(oxSolid);
+        protectedTokens[4] = address(bveOXD);
+        protectedTokens[5] = address(bOxSolid);
         return protectedTokens;
     }
 
@@ -105,20 +104,57 @@ contract StrategyOxdStaker is BaseStrategy {
     }
 
     function _harvest() internal override returns (TokenAmount[] memory harvested) {
-        // No-op as we don't do anything with funds
-        // use autoCompoundRatio here to convert rewards to want ...
+        harvested = new TokenAmount[](2);
 
-        // Nothing harvested, we have 2 tokens, return both 0s
-        harvested = new TokenAmount[](1);
-        harvested[0] = TokenAmount(want, 0);
+        // 1. Claim all staking rewards (OXD, SOLID and oxSOLID in some cases).
+        IUserProxy(userProxyInterface).claimStakingRewards();
 
-        // // keep this to get paid!
-        // _reportToVault(0);
+        // 2. Desposit all OXD into bveOXD and distribute
+        uint256 oxdBalance = oxd.balanceOf(address(this));
+        harvested[0].token = address(bveOXD);
+        if (oxdBalance > 0) {
+            bveOXD.deposit(oxdBalance);
+            uint256 vaultBalance = bveOXD.balanceOf(address(this));
 
-        // // Use this if your strategy doesn't sell the extra tokens
-        // // This will take fees and send the token to the badgerTree
-        // _processExtraToken(token, amount);
+            harvested[0].amount = vaultBalance;
+            _processExtraToken(address(bveOXD), vaultBalance);
+        }
 
+        // 3. Swap SOLID for oxSOLID
+        uint256 solidBalance = solid.balanceOf(address(this));
+        if (solidBalance > 0) {
+            (, bool stable) = router.getAmountOut(
+                solidBalance,
+                address(solid),
+                address(oxSolid)
+            );
+
+            route[] memory routeArray = new route[](1);
+            routeArray[0] = route(address(solid), address(oxSolid), stable);
+            router.swapExactTokensForTokens(
+                solidBalance,
+                solidBalance, // at least 1:1
+                routeArray,
+                address(this),
+                block.timestamp
+            );
+        }
+
+        // 4. Deposit all oxSOLID into bOxSolid and distribute
+        uint256 oxSolidBalance = oxSolid.balanceOf(address(this));
+        harvested[1].token = address(bOxSolid);
+        if (oxSolidBalance > 0) {
+            bOxSolid.deposit(oxSolidBalance);
+            uint256 vaultBalance = bOxSolid.balanceOf(address(this));
+
+            harvested[1].amount = vaultBalance;
+            _processExtraToken(address(bOxSolid), vaultBalance);
+        }
+
+        // keep this to get paid!
+        _reportToVault(0);
+
+        // Harvested: bveOXD and bOxSolid
         return harvested;
     }
 
@@ -158,7 +194,6 @@ contract StrategyOxdStaker is BaseStrategy {
                 )
             );
         }
-
         return rewards;
     }
 
