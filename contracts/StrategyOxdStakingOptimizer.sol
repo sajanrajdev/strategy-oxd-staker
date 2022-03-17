@@ -26,6 +26,8 @@ contract StrategyOxdStakingOptimizer is BaseStrategy {
     IBaseV1Router01 public constant router =
         IBaseV1Router01(0xa38cd27185a464914D3046f0AB9d43356B34829D);
 
+    // Badger
+
     IVault public bveOXD;
     IVault public bOxSolid;
 
