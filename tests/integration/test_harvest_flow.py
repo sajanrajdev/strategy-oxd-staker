@@ -220,10 +220,6 @@ def test_single_user_harvest_flow_remove_fees(deployer, vault, strategy, want, k
 
     snap.settHarvest({"from": keeper})
 
-    ## If the strategy is printing, this should be true
-    assert vault.balanceOf(vault.treasury()) > 0
-    ## If the strategy is not printing, add checks here to verify that tokens were emitted
-
     chain.sleep(days(1))
     chain.mine()
 
