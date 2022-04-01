@@ -25,17 +25,21 @@ class StrategyResolver(StrategyCoreResolver):
         super().add_balances_snap(calls, entities)
         strategy = self.manager.strategy
 
-        oxd = interface.IERC20(strategy.oxd())
-        oxSolid = interface.IERC20(strategy.oxSolid())
-        solid = interface.IERC20(strategy.solid())
-        bveOXD = interface.IERC20(strategy.bveOXD())
-        bOxSolid = interface.IERC20(strategy.bOxSolid())
+        oxd = interface.IERC20(strategy.OXD())
+        oxSolid = interface.IERC20(strategy.OXSOLID())
+        solid = interface.IERC20(strategy.SOLID())
+        bveOXD = interface.IERC20(strategy.BVEOXD())
+        bveOXD_OXD = interface.IERC20(strategy.BVEOXD_OXD())
+        bOxSolid = interface.IERC20(strategy.BOXSOLID())
+        bBveOXD_OXD = interface.IERC20(strategy.BBVEOXD_OXD())
 
         calls = self.add_entity_balances_for_tokens(calls, "oxd", oxd, entities)
         calls = self.add_entity_balances_for_tokens(calls, "oxSolid", oxSolid, entities)
         calls = self.add_entity_balances_for_tokens(calls, "solid", solid, entities)
         calls = self.add_entity_balances_for_tokens(calls, "bveOXD", bveOXD, entities)
+        calls = self.add_entity_balances_for_tokens(calls, "bveOXD_OXD", bveOXD_OXD, entities)
         calls = self.add_entity_balances_for_tokens(calls, "bOxSolid", bOxSolid, entities)
+        calls = self.add_entity_balances_for_tokens(calls, "bBveOXD_OXD", bBveOXD_OXD, entities)
 
         return calls
 
@@ -56,8 +60,8 @@ class StrategyResolver(StrategyCoreResolver):
         assert len(tx.events["TreeDistribution"]) == 2
 
         tokens = [
-            ("bveOXD", self.manager.strategy.bveOXD()), 
-            ("bOxSolid", self.manager.strategy.bOxSolid())
+            ("bBveOXD_OXD", self.manager.strategy.BBVEOXD_OXD()), 
+            ("bOxSolid", self.manager.strategy.BOXSOLID())
         ]
 
         for (name, token), event in zip(tokens, tx.events["TreeDistribution"]):

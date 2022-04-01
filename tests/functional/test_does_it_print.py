@@ -30,7 +30,7 @@ def test_is_profitable(vault, strategy, want, randomUser, deployer):
 
     snap.settEarn({"from": settKeeper})
 
-    chain.sleep(15)
+    chain.sleep(10000 * 13)
     chain.mine(1)
 
     strategy.harvest({"from": settKeeper})
@@ -65,6 +65,9 @@ def test_is_acceptable_apr(vault, strategy, want, keeper, deployer):
 
     # Earn
     snap.settEarn({"from": keeper})
+
+    chain.sleep(10000 * 13)
+    chain.mine(1)
 
     # Harvest
     strategy.harvest({"from": keeper})

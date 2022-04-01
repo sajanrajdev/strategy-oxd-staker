@@ -1,8 +1,8 @@
 ## Token deposited in the vault
-WANT = "0xcB6eAB779780c7FD6d014ab90d8b10e97A1227E2" # AMM - WFTM/OXD (vAMM-WFTM-OXD)
+WANT = "0x5821573d8F04947952e76d94f3ABC6d7b43bF8d0" # StableV1 AMM - USDC/DEI 
 
 ## Account that has a lot of want (we will "borrow it" for testing)
-WHALE_ADDRESS = "0x2A6931b75ee4e062baABEe7F297166871Ee55837"
+WHALE_ADDRESS = "0x08e43d1Cc71Dfd038584e36496d890Ec2874b340"
 
 ## Address for Badger Registry, used to fill in default addresses
 ## See: https://github.com/Badger-Finance/badger-registry

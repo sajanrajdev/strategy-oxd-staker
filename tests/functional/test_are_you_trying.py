@@ -56,7 +56,7 @@ def test_are_you_trying(deployer, vault, strategy, want, governance):
 
     ## TEST 3: Does the strategy emit anything?
     event = harvest.events["TreeDistribution"]
-    assert event[0]["token"] == strategy.bveOXD()
+    assert event[0]["token"] == strategy.bBveOxd_Oxd()
     assert event[0]["amount"] > 0
     assert event[1]["token"] == strategy.bOxSolid()
     assert event[1]["amount"] > 0
