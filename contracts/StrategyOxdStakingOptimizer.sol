@@ -23,40 +23,59 @@ contract StrategyOxdStakingOptimizer is BaseStrategy {
     address public stakingAddress;
 
     // Solidly
-    IBaseV1Router01 public constant router =
+    IBaseV1Router01 public constant SOLIDLY_ROUTER =
         IBaseV1Router01(0xa38cd27185a464914D3046f0AB9d43356B34829D);
 
     // Badger
-    IVault public bveOXD;
+    IVault public bBveOxd_Oxd;
     IVault public bOxSolid;
+    IVault public bveOXD;
+
+    // slippage tolerance 95% (divide by MAX_BPS) - Changeable by Governance or Strategist
+    uint256 public sl;
 
     // ===== Token Registry =====
 
-    IERC20Upgradeable public constant solid =
+    IERC20Upgradeable public constant SOLID =
         IERC20Upgradeable(0x888EF71766ca594DED1F0FA3AE64eD2941740A20);
-    IERC20Upgradeable public constant oxd =
+    IERC20Upgradeable public constant OXD =
         IERC20Upgradeable(0xc5A9848b9d145965d821AaeC8fA32aaEE026492d);
-    IERC20Upgradeable public constant oxSolid =
+    IERC20Upgradeable public constant OXSOLID =
         IERC20Upgradeable(0xDA0053F0bEfCbcaC208A3f867BB243716734D809);
+    IERC20Upgradeable public constant BVEOXD =
+        IERC20Upgradeable(0x96d4dBdc91Bef716eb407e415c9987a9fAfb8906);
+    IERC20Upgradeable public constant BVEOXD_OXD =
+        IERC20Upgradeable(0x6519546433dCB0a34A0De908e1032c46906EF664);
+
+    // Helpers
+    address public constant BBVEOXD_OXD = 0xbF2F3a9ba42A00CA5B18842D8eB1954120e4a2A9;
+    address public constant BOXSOLID = 0xa8bD8655A0dCABE76913D821Ab437562276b3B59;
 
     /// @dev Initialize the Strategy with security settings as well as tokens
     /// @notice Proxies will set any non constant variable you declare as default value
     /// @dev add any extra changeable variable at end of initializer as shown
-    function initialize(address _vault, address[3] memory _wantConfig) public initializer {
+    function initialize(address _vault, address _want) public initializer {
         __BaseStrategy_init(_vault);
-        /// @dev Add config here
-        want = _wantConfig[0];
-        bveOXD = IVault(_wantConfig[1]);
-        bOxSolid = IVault(_wantConfig[2]);
+        want = _want;
+
+        bBveOxd_Oxd = IVault(BBVEOXD_OXD);
+        bOxSolid = IVault(BOXSOLID);
+        bveOXD = IVault(address(BVEOXD));
 
         // Get staking OxDAO Staking Contract for pool
         stakingAddress = IOxLens(oxLens).stakingRewardsBySolidPool(want);
 
+        // Set default slippage value (95%)
+        sl = 9_500;
+
         // Token approvals
         IERC20Upgradeable(want).safeApprove(userProxyInterface, type(uint256).max);
-        solid.safeApprove(address(router), type(uint256).max);
-        oxd.safeApprove(address(bveOXD), type(uint256).max);
-        oxSolid.safeApprove(address(bOxSolid), type(uint256).max);
+        SOLID.safeApprove(address(SOLIDLY_ROUTER), type(uint256).max);
+        OXD.safeApprove(address(SOLIDLY_ROUTER), type(uint256).max);
+        OXD.safeApprove(address(BVEOXD), type(uint256).max);
+        BVEOXD.safeApprove(address(SOLIDLY_ROUTER), type(uint256).max);
+        BVEOXD_OXD.safeApprove(BBVEOXD_OXD, type(uint256).max);
+        OXSOLID.safeApprove(BOXSOLID, type(uint256).max);
     }
 
     /// @dev Return the name of the strategy
@@ -70,12 +89,18 @@ contract StrategyOxdStakingOptimizer is BaseStrategy {
     function getProtectedTokens() public view virtual override returns (address[] memory) {
         address[] memory protectedTokens = new address[](6);
         protectedTokens[0] = want;
-        protectedTokens[1] = address(solid);
-        protectedTokens[2] = address(oxd);
-        protectedTokens[3] = address(oxSolid);
+        protectedTokens[1] = address(SOLID);
+        protectedTokens[2] = address(OXD);
+        protectedTokens[3] = address(OXSOLID);
         protectedTokens[4] = address(bveOXD);
-        protectedTokens[5] = address(bOxSolid);
+        protectedTokens[5] = address(BVEOXD_OXD);
         return protectedTokens;
+    }
+
+    /// @notice sets slippage tolerance for liquidity provision
+    function setSlippageTolerance(uint256 _s) external whenNotPaused {
+        _onlyGovernanceOrStrategist();
+        sl = _s;
     }
 
     /// @dev Deposit `_amount` of want, investing it to earn yield
@@ -102,33 +127,80 @@ contract StrategyOxdStakingOptimizer is BaseStrategy {
 
     function _harvest() internal override returns (TokenAmount[] memory harvested) {
         harvested = new TokenAmount[](2);
+        harvested[0].token = address(bBveOxd_Oxd);
+        harvested[1].token = address(bOxSolid);
 
         // 1. Claim all staking rewards (OXD, SOLID and oxSOLID in some cases).
         IUserProxy(userProxyInterface).claimStakingRewards();
 
-        // 2. Desposit all OXD into bveOXD and distribute
-        uint256 oxdBalance = oxd.balanceOf(address(this));
-        harvested[0].token = address(bveOXD);
+        // 2. Desposit all OXD into bBveOXD/OXD and distribute
+        uint256 oxdBalance = OXD.balanceOf(address(this));
         if (oxdBalance > 0) {
-            bveOXD.deposit(oxdBalance);
-            uint256 vaultBalance = bveOXD.balanceOf(address(this));
+            // Get bveOXD/OXD pool's reserves ratio
+            uint256 ratio = getSolidlyPoolRatio(
+                address(OXD),
+                address(BVEOXD),
+                false
+            );
+
+            // Estimate the amounts required for liquidity provision
+            uint256 amount_bveOXD = oxdBalance.mul(MAX_BPS).div(MAX_BPS + ratio);
+            uint256 amount_OXD = oxdBalance - amount_bveOXD;
+
+            // Check if swap quote is within the slippage tolerance from the
+            // required amount, otherwise deposit on bveOXD directly
+            (uint256 solidlyQuote,) = IBaseV1Router01(SOLIDLY_ROUTER)
+                .getAmountOut(amount_OXD, address(OXD), address(BVEOXD));
+
+            if (solidlyQuote >= amount_bveOXD.mul(sl).div(MAX_BPS)) {
+                route[] memory routeArray = new route[](1);
+                routeArray[0] = route(address(OXD), address(BVEOXD), false); // Volatile pool
+                SOLIDLY_ROUTER.swapExactTokensForTokens(
+                    amount_OXD,
+                    0,
+                    routeArray,
+                    address(this),
+                    block.timestamp
+                );
+            } else {
+                bveOXD.deposit(amount_bveOXD);
+            }
+
+            // Add liquidity to the bveOXD/OXD LP Volatile pool
+            uint256 bveOXDIn = BVEOXD.balanceOf(address(this));
+            uint256 oxdIn = OXD.balanceOf(address(this));
+            SOLIDLY_ROUTER.addLiquidity(
+                address(BVEOXD),
+                address(OXD),
+                false,
+                bveOXDIn,
+                oxdIn,
+                bveOXDIn.mul(sl).div(MAX_BPS),
+                oxdIn.mul(sl).div(MAX_BPS),
+                address(this),
+                now
+            );
+
+            // Deposit all acquired bveOXD/OXD LP into the Badger helper
+            bBveOxd_Oxd.depositAll();
+            uint256 vaultBalance = bBveOxd_Oxd.balanceOf(address(this));
 
             harvested[0].amount = vaultBalance;
-            _processExtraToken(address(bveOXD), vaultBalance);
+            _processExtraToken(address(bBveOxd_Oxd), vaultBalance);
         }
 
         // 3. Swap SOLID for oxSOLID
-        uint256 solidBalance = solid.balanceOf(address(this));
+        uint256 solidBalance = SOLID.balanceOf(address(this));
         if (solidBalance > 0) {
-            (, bool stable) = router.getAmountOut(
+            (, bool stable) = SOLIDLY_ROUTER.getAmountOut(
                 solidBalance,
-                address(solid),
-                address(oxSolid)
+                address(SOLID),
+                address(OXSOLID)
             );
 
             route[] memory routeArray = new route[](1);
-            routeArray[0] = route(address(solid), address(oxSolid), stable);
-            router.swapExactTokensForTokens(
+            routeArray[0] = route(address(SOLID), address(OXSOLID), stable);
+            SOLIDLY_ROUTER.swapExactTokensForTokens(
                 solidBalance,
                 solidBalance, // at least 1:1
                 routeArray,
@@ -138,8 +210,7 @@ contract StrategyOxdStakingOptimizer is BaseStrategy {
         }
 
         // 4. Deposit all oxSOLID into bOxSolid and distribute
-        uint256 oxSolidBalance = oxSolid.balanceOf(address(this));
-        harvested[1].token = address(bOxSolid);
+        uint256 oxSolidBalance = OXSOLID.balanceOf(address(this));
         if (oxSolidBalance > 0) {
             bOxSolid.deposit(oxSolidBalance);
             uint256 vaultBalance = bOxSolid.balanceOf(address(this));
@@ -172,6 +243,20 @@ contract StrategyOxdStakingOptimizer is BaseStrategy {
         } else {
             return 0;
         }
+    }
+
+    /// @dev View function to find the reserves ratio of a certain pool on Solidly
+    function getSolidlyPoolRatio(
+        address tokenA,
+        address tokenB,
+        bool volatile
+    ) public view returns (uint256) {
+        (uint256 reservesA, uint256 reservesB) = SOLIDLY_ROUTER.getReserves(
+            tokenA,
+            tokenB,
+            volatile
+        );
+        return reservesA.mul(MAX_BPS).div(reservesB);
     }
 
     /// @dev Return the balance of rewards that the strategy has accrued

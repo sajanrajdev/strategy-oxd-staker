@@ -40,4 +40,10 @@ interface IBaseV1Router01 {
         address to,
         uint256 deadline
     ) external returns (uint256[] memory amounts);
+
+    function getReserves(
+        address tokenA, 
+        address tokenB, 
+        bool stable
+    ) external view returns (uint reserveA, uint reserveB);
 }
