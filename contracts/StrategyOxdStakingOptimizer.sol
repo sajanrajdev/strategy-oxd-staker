@@ -152,7 +152,7 @@ contract StrategyOxdStakingOptimizer is BaseStrategy {
             (uint256 solidlyQuote,) = IBaseV1Router01(SOLIDLY_ROUTER)
                 .getAmountOut(amount_OXD, address(OXD), address(BVEOXD));
 
-            if (solidlyQuote >= amount_bveOXD.mul(sl).div(MAX_BPS)) {
+            if (solidlyQuote > amount_bveOXD.mul(1e18).div(bveOXD.getPricePerFullShare())) {
                 route[] memory routeArray = new route[](1);
                 routeArray[0] = route(address(OXD), address(BVEOXD), false); // Volatile pool
                 SOLIDLY_ROUTER.swapExactTokensForTokens(
